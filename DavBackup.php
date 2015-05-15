@@ -37,17 +37,15 @@
  * @package   davbackup
  * @author    Dmitry Mamontov <d.slonyara@gmail.com>
  * @copyright 2015 Dmitry Mamontov <d.slonyara@gmail.com>
- * @license   http://www.opensource.org/licenses/BSD-3-Clause  The BSD 3-Clause License
- * @since     File available since Release 1.0.0
  */
 
 /**
- * DavBackup main class implements backup and sending it to the cloud. 
+ * DavBackup main class implements backup and sending it to the cloud.
  *
  * @author    Dmitry Mamontov <d.slonyara@gmail.com>
  * @copyright 2015 Dmitry Mamontov <d.slonyara@gmail.com>
  * @license   http://www.opensource.org/licenses/BSD-3-Clause  The BSD 3-Clause License
- * @version   Release: 1.0.0
+ * @version   Release: 1.1.0
  * @link      https://github.com/dmamontov/davbackup
  * @since     Class available since Release 1.0.0
  * @abstract
@@ -62,7 +60,7 @@ abstract class DavBackup
     /*
      * Directory for the temporary storage of backups
      */
-    const TMPPATH = 'tmp';
+    const TMPPATH = '../../../tmp';
 
     /**
      * URL to the cloud
@@ -102,7 +100,7 @@ abstract class DavBackup
      * @access public
      */
     public $compression = true;
-    
+
     /**
      * Type of authorization
      * @var string
@@ -118,13 +116,17 @@ abstract class DavBackup
      * @return void
      * @access protected
      */
-    protected function __construct($url, $login, $password)
+    protected function __construct($url, $login, $password, $custom_name = null)
     {
         ini_set('memory_limit','-1');
 
         self::$url = $url;
         self::$credentials = array($login, $password);
-        self::$time = time();
+        $time = time();
+        if($custom_name !== null){
+            $time = $time.'_'.$custom_name;
+        }
+        self::$time = $time;
 
         if (file_exists(__DIR__ . '/' . self::TMPPATH . '/') == false) {
             mkdir(__DIR__ . '/' . self::TMPPATH . '/', 0755);
@@ -150,29 +152,52 @@ abstract class DavBackup
         }
 
         try {
-            $archive = new PharData(__DIR__ . '/' . self::TMPPATH . '/' . self::$time . '.tar');
+            $zip = new ZipArchive();
+            $zip->open(__DIR__ . '/' . self::TMPPATH . '/' . self::$time . '.zip', ZipArchive::CREATE | ZipArchive::OVERWRITE);
+
             if (is_null(self::$path) == false) {
-                $archive->buildFromDirectory(self::$path);
+                $files = new RecursiveIteratorIterator(
+                    new RecursiveDirectoryIterator(self::$path),
+                    RecursiveIteratorIterator::LEAVES_ONLY
+                );
+
+                foreach ($files as $name => $file)
+                {
+                    // Skip directories (they would be added automatically)
+                    if (!$file->isDir())
+                    {
+                        // Get real and relative path for current file
+                        $filePath = $file->getRealPath();
+                        $relativePath = substr($filePath, strlen(self::$path));
+
+
+                        // Add current file to archive
+                        $zip->addFile($filePath, $relativePath);
+                    }
+                }
+
+
             }
 
             if (file_exists(__DIR__ . '/' . self::TMPPATH . '/' . self::$time . '.sql')) {
-                $archive->addFile(
-                    __DIR__ . '/' . self::TMPPATH . '/' . self::$time . '.sql',
+                $zip->addFile(
+                    realpath(__DIR__ . '/' . self::TMPPATH . '/' . self::$time . '.sql'),
                     'sql/' . self::$time . '.sql'
                 );
+            }
+
+            $zip->close();
+
+            if (file_exists(__DIR__ . '/' . self::TMPPATH . '/' . self::$time . '.sql')) {
                 unlink(__DIR__ . '/' . self::TMPPATH . '/' . self::$time . '.sql');
             }
 
-            if ($this->compression == true) {
-                $archive->compress(Phar::GZ);
-                unlink(__DIR__ . '/' . self::TMPPATH . '/' . self::$time . '.tar');
-            }
 
         } catch (Exception $e) {
             throw new RuntimeException("Failed to create the archive: $e");
         }
 
-        $realName = self::$time . '.tar' . ($this->compression == true ? '.gz' : '');
+        $realName = self::$time . '.zip';
 
         if (file_exists(__DIR__ . '/' . self::TMPPATH . '/' . $realName)) {
             $send = $this->request(
@@ -334,7 +359,7 @@ abstract class DavBackup
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_FAILONERROR, false);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+      //  curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
         curl_setopt($ch, CURLOPT_HEADER, false);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         curl_setopt($ch, CURLOPT_USERPWD, implode(':', self::$credentials));
@@ -392,15 +417,15 @@ class YandexBackup extends DavBackup
      * @return void
      * @access public
      */
-    public function __construct($login, $password)
+    public function __construct($login, $password, $custom_name)
     {
-        parent::__construct(self::URL, (string) $login, (string) $password);
+        parent::__construct(self::URL, (string) $login, (string) $password, (string) $custom_name);
     }
 }
 
 /**
  * GoogleBackup - backup in GoogleDrive.
- * 
+ *
  * @author    Dmitry Mamontov <d.slonyara@gmail.com>
  * @copyright 2015 Dmitry Mamontov <d.slonyara@gmail.com>
  * @license   http://www.opensource.org/licenses/BSD-3-Clause  The BSD 3-Clause License
@@ -423,9 +448,9 @@ class GoogleBackup extends DavBackup
      * @return void
      * @access public
      */
-    public function __construct($login, $password)
+    public function __construct($login, $password, $custom_name)
     {
-        parent::__construct(self::URL, (string) $login, (string) $password);
+        parent::__construct(self::URL, (string) $login, (string) $password, (string) $custom_name);
     }
 }
 
@@ -454,9 +479,9 @@ class DropBoxBackup extends DavBackup
      * @return void
      * @access public
      */
-    public function __construct($login, $password)
+    public function __construct($login, $password, $custom_name)
     {
-        parent::__construct(self::URL, (string) $login, (string) $password);
+        parent::__construct(self::URL, (string) $login, (string) $password, (string) $custom_name);
     }
 }
 
@@ -484,10 +509,10 @@ class CloudMeBackup extends DavBackup
      * @return void
      * @access public
      */
-    public function __construct($login, $password)
+    public function __construct($login, $password, $custom_name)
     {
         $this->authtype = CURLAUTH_ANY;
-        parent::__construct(self::URL . "$login/CloudDrive/Documents/", (string) $login, (string) $password);
+        parent::__construct(self::URL, (string) $login, (string) $password, (string) $custom_name);
     }
 }
 
